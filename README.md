@@ -83,9 +83,11 @@ From the command line (with `spike_data.npz` in the same folder):
 ```bash
 python testing_module.py simulated_spike_data.npz
 python testing_module.py team_A.npz team_B.npz --reference path/to/spike_data.npz
+python testing_module.py teams_folder/ --csv ranking.csv     # every file in a folder
+python testing_module.py team_A.npz --strict                 # no repairs: wrong structure = 0
 ```
 
-When several files are given, the module also prints a ranking.
+When several files are given, the module also prints a ranking. Accepted formats are `.npz`, `.npy`, `.csv`, `.txt` and `.mat`. A missing or unreadable file gets 0 with the reason printed; it never stops the ranking of the other files.
 
 From Python:
 
@@ -208,14 +210,21 @@ The simulation has its own random noise, so even a **perfect** simulation has an
 
 ### How a file is scored
 
-**Step 1 — Structure check (pass/fail).** The file must have:
+**Step 1 — Loading and structure check.** The original has:
 
 - exactly the keys `t` and `raw_data`;
 - `float64` arrays of shape `(10000,)`;
 - no NaN or Inf values;
 - the same time axis as the original.
 
-If any check fails, the score is **0**. Files are opened with `allow_pickle=False`, so no code inside a file can run.
+Every check is reported as PASS/FAIL. Other teams' files often differ from this structure, so the loader repairs what it can without changing the signal values, and lists every repair as `[FIX]`:
+
+- `t` missing → rebuilt as `arange(10000) / 1000` s; `t` in ms → converted to s;
+- other key names (`data`, `signal`, `time`, `x`/`y`, `arr_0`/`arr_1`, a stacked `(2, 10000)` array) → the signal and time arrays are found by name or, failing that, by shape (the time array is the one with a constant step);
+- `float32` → `float64`; shape `(1, 10000)` → `(10000,)`; more than 10,000 samples → truncated;
+- up to 1 % NaN/Inf samples → linear interpolation.
+
+A file that needed repairs is scored, but its composite is multiplied by **0.9**, so the required structure still matters. With `--strict`, any failed check gives **0**. Only a file without a usable 10,000-sample signal (too short, only a time array, Python objects, not a data file) gets **0**, with the reason printed. Files are opened with `allow_pickle=False`, so no code inside a file can run.
 
 **Step 2 — Ten metrics in four groups (tiers).** The same properties are measured in both signals:
 
@@ -264,7 +273,7 @@ The module uses no random numbers, so the same file always gets the same score.
   3. Residual noise histogram, normal Q–Q plot and Welch spectra.
   4. Number of detected spikes vs. threshold factor `k` (3.0–6.5), with 5–95% bands over 100 seeds.
   5. Scores of the control files.
-- **Control files:** 16 files with one deliberate change each, plus one file saved as `float32`. They test whether the module ranks correctly.
+- **Control files:** 16 files with one deliberate change each, plus one file saved as `float32` (wrong structure). They test whether the module ranks correctly.
 
 ---
 
@@ -291,6 +300,7 @@ The module uses no random numbers, so the same file always gets the same score.
 | **Deterministic file (submission)** | **100.0** | **100.0** | – |
 | Spike times shifted by +1 ms | 97.3 | 100.0 | – |
 | Original + new noise N(0, 0.1²) | 93.7 | 93.7 | copied |
+| Deterministic file saved as `float32` | 90.0 | 90.0 | repaired, × 0.9 |
 | **Stochastic file** | **88.0** | **99.7** | – |
 | Drift without linear trend | 82.5 | 73.8 | – |
 | Spike amplitude × 0.7 | 78.9 | 77.6 | – |
@@ -302,14 +312,13 @@ The module uses no random numbers, so the same file always gets the same score.
 | No spikes | 49.9 | 53.8 | – |
 | Shuffled original | 17.1 | 14.8 | – |
 | White noise (mean, SD of original) | 10.5 | 6.1 | – |
-| Deterministic file saved as `float32` | 0.0 | 0.0 | structure check failed |
 
 **What this shows:**
 
 - Both correct models rank above every file with a wrong drift, spike shape, noise level or firing rate.
 - A smooth, noise-free model is **not** rewarded (68.3), because the noise tier catches it.
 - Copies of the original score high but are **flagged**.
-- A file with the wrong data type scores **0**.
+- A correct simulation saved with the wrong data type is repaired and scored, but loses 10 % (90.0).
 
 ### Summary of findings
 
